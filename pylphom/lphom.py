@@ -2,7 +2,12 @@ import numpy as np
 from scipy.optimize import linprog
 
 
-def lphom(votes1: np.ndarray, votes2: np.ndarray, fixed_zeros: list[tuple[int, int]] | None = None) -> np.ndarray:
+def lphom(
+    votes1: np.ndarray,
+    votes2: np.ndarray,
+    fixed_zeros: list[tuple[int, int]] | None = None,
+    match_totals: bool = True,
+) -> np.ndarray:
     """
     Estimate a global vote transfer matrix via linear programming.
 
@@ -18,6 +23,12 @@ def lphom(votes1: np.ndarray, votes2: np.ndarray, fixed_zeros: list[tuple[int, i
     fixed_zeros : list of (j, k), optional
         Entries of P that are constrained to be exactly 0 (e.g. a
         structurally impossible transition such as new-voter -> removed-voter).
+    match_totals : bool, default True
+        Also require the estimated election-2 totals to equal the observed
+        ones exactly: votes1.sum(0) @ P == votes2.sum(0). This is what the R
+        lphom package does. It needs votes1.sum() == votes2.sum(); use
+        `build_extended` to balance the totals, or pass False to only
+        minimise the residual.
 
     Returns
     -------
@@ -42,6 +53,13 @@ def lphom(votes1: np.ndarray, votes2: np.ndarray, fixed_zeros: list[tuple[int, i
             raise ValueError(f"fixed_zeros entry ({j}, {k}) out of bounds for P of shape ({J}, {K})")
     fixed_idx = {j * K + k for j, k in fixed_zeros}
 
+    if match_totals and not np.isclose(votes1.sum(), votes2.sum()):
+        raise ValueError(
+            f"match_totals=True needs equal grand totals, got sum(votes1)={votes1.sum()} "
+            f"and sum(votes2)={votes2.sum()}. Use build_extended to add new/removed "
+            "voters, or pass match_totals=False."
+        )
+
     # Decision variables (in order):
     #   p      : J*K  — entries of P, flattened row-major (P[j,k] = p[j*K + k])
     #   e_plus : N*K  — positive part of residual for each (precinct, party2)
@@ -60,8 +78,9 @@ def lphom(votes1: np.ndarray, votes2: np.ndarray, fixed_zeros: list[tuple[int, i
     #   (a) row-stochastic:  sum_k P[j, k] = 1  for each j         → J rows
     #   (b) residual def:    votes1[i] @ P[:, k] - e+[i,k] + e-[i,k] = votes2[i,k]
     #                        for each (i, k)                        → N*K rows
+    #   (c) if match_totals: votes1.sum(0) @ P[:, k] = votes2.sum(0)[k]  → K rows
 
-    n_eq = J + n_e
+    n_eq = J + n_e + (K if match_totals else 0)
     A_eq = np.zeros((n_eq, n_vars))
     b_eq = np.zeros(n_eq)
 
@@ -79,6 +98,14 @@ def lphom(votes1: np.ndarray, votes2: np.ndarray, fixed_zeros: list[tuple[int, i
         A_eq[rows, n_p + np.arange(N) * K + k] = -1.0   # e_plus
         A_eq[rows, n_p + n_e + np.arange(N) * K + k] = 1.0  # e_minus
         b_eq[J + np.arange(N) * K + k] = votes2[:, k]
+
+    # (c) aggregate totals
+    if match_totals:
+        xt = votes1.sum(axis=0)
+        yt = votes2.sum(axis=0)
+        for k in range(K):
+            A_eq[J + n_e + k, np.arange(J) * K + k] = xt
+            b_eq[J + n_e + k] = yt[k]
 
     # Bounds: P entries in [0, 1] (or fixed to 0); slack variables >= 0
     p_bounds = [(0.0, 0.0) if idx in fixed_idx else (0.0, 1.0) for idx in range(n_p)]

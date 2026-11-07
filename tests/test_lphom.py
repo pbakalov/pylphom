@@ -8,7 +8,8 @@ def _synthetic(P_true, precinct_totals, rng):
     N = len(precinct_totals)
     J = P_true.shape[0]
     votes1 = np.array([
-        rng.multinomial(n, [1 / J] * J) for n in precinct_totals
+        # vary party shares across precincts so P is identifiable
+        rng.multinomial(n, rng.dirichlet(np.ones(J))) for n in precinct_totals
     ], dtype=float)
     votes2 = np.array([
         rng.multinomial(int(votes1[i].sum()), votes1[i] / votes1[i].sum() @ P_true)
@@ -49,3 +50,27 @@ class TestLphomProperties:
 
         with pytest.raises(ValueError):
             lphom(np.ones(10), np.ones(10))  # 1-D inputs
+
+
+class TestMatchTotals:
+    def _data(self):
+        rng = np.random.default_rng(3)
+        P_true = np.array([[0.7, 0.2, 0.1], [0.1, 0.6, 0.3], [0.2, 0.3, 0.5]])
+        return _synthetic(P_true, [500] * 30, rng)
+
+    def test_totals_reproduced(self):
+        votes1, votes2 = self._data()
+        P = lphom(votes1, votes2)
+        np.testing.assert_allclose(votes1.sum(0) @ P, votes2.sum(0), rtol=1e-8)
+
+    def test_off_gives_lower_or_equal_residual(self):
+        votes1, votes2 = self._data()
+        l1 = lambda P: np.abs(votes1 @ P - votes2).sum()
+        assert l1(lphom(votes1, votes2, match_totals=False)) <= l1(lphom(votes1, votes2)) + 1e-6
+
+    def test_unbalanced_grand_totals_raise(self):
+        votes1 = np.array([[10.0, 5.0], [8.0, 4.0]])
+        votes2 = np.array([[10.0, 6.0], [8.0, 4.0]])
+        with pytest.raises(ValueError, match="match_totals"):
+            lphom(votes1, votes2)
+        lphom(votes1, votes2, match_totals=False)  # fine without the constraint

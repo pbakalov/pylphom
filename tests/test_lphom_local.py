@@ -8,7 +8,8 @@ def _synthetic(P_true, precinct_totals, rng):
     N = len(precinct_totals)
     J = P_true.shape[0]
     votes1 = np.array([
-        rng.multinomial(n, [1 / J] * J) for n in precinct_totals
+        # vary party shares across precincts so P is identifiable
+        rng.multinomial(n, rng.dirichlet(np.ones(J))) for n in precinct_totals
     ], dtype=float)
     votes2 = np.array([
         rng.multinomial(int(votes1[i].sum()), votes1[i] / votes1[i].sum() @ P_true)
@@ -75,3 +76,24 @@ class TestLphomLocal:
         P_local = lphom_local(votes1, votes2, P_global, fixed_zeros=fixed_zeros)
         np.testing.assert_allclose(P_local[:, 2, 2], 0.0, atol=1e-9)
         np.testing.assert_allclose(P_local.sum(axis=2), 1.0, atol=1e-6)
+
+
+class TestTiebreak:
+    # One precinct where every feasible N has the same stage-1 error:
+    # N = [[a, 1-a], [2-a, 1+a]] for a in [0, 1]. The tie-break objective
+    # sum |N[j,k]/x[j] - P_ref[j,k]| is smallest at a = 1.
+    votes1 = np.array([[1.0, 3.0]])
+    votes2 = np.array([[2.0, 2.0]])
+    P_ref = np.array([[1.0, 0.0], [1.0, 0.0]])
+
+    def test_picks_solution_closest_to_reference(self):
+        P_local = lphom_local(self.votes1, self.votes2, self.P_ref)
+        np.testing.assert_allclose(P_local[0], [[1.0, 0.0], [1 / 3, 2 / 3]], atol=1e-7)
+
+    def test_same_stage1_error_with_and_without(self):
+        def err(P):
+            return np.abs(self.votes1[0][:, None] * (P - self.P_ref)).sum()
+
+        on = lphom_local(self.votes1, self.votes2, self.P_ref)[0]
+        off = lphom_local(self.votes1, self.votes2, self.P_ref, tiebreak=False)[0]
+        assert np.isclose(err(on), err(off))

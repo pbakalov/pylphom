@@ -7,7 +7,8 @@ def _synthetic(P_true, precinct_totals, rng):
     N = len(precinct_totals)
     J = P_true.shape[0]
     votes1 = np.array([
-        rng.multinomial(n, [1 / J] * J) for n in precinct_totals
+        # vary party shares across precincts so P is identifiable
+        rng.multinomial(n, rng.dirichlet(np.ones(J))) for n in precinct_totals
     ], dtype=float)
     votes2 = np.array([
         rng.multinomial(int(votes1[i].sum()), votes1[i] / votes1[i].sum() @ P_true)

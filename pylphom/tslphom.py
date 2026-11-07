@@ -15,6 +15,8 @@ def tslphom(
     votes1: np.ndarray,
     votes2: np.ndarray,
     fixed_zeros: list[tuple[int, int]] | None = None,
+    match_totals: bool = True,
+    tiebreak: bool = True,
 ) -> TslphomResult:
     """
     Two-stage lphom.
@@ -39,6 +41,10 @@ def tslphom(
     fixed_zeros : list of (j, k), optional
         Entries of P that are constrained to be exactly 0. Passed through to
         both `lphom` and `lphom_local`.
+    match_totals : bool, default True
+        Passed to `lphom`.
+    tiebreak : bool, default True
+        Passed to `lphom_local`.
 
     Returns
     -------
@@ -50,8 +56,8 @@ def tslphom(
     votes1 = np.asarray(votes1, dtype=float)
     votes2 = np.asarray(votes2, dtype=float)
 
-    P_global = lphom(votes1, votes2, fixed_zeros=fixed_zeros)
-    P_local = lphom_local(votes1, votes2, P_global, fixed_zeros=fixed_zeros)
+    P_global = lphom(votes1, votes2, fixed_zeros=fixed_zeros, match_totals=match_totals)
+    P_local = lphom_local(votes1, votes2, P_global, fixed_zeros=fixed_zeros, tiebreak=tiebreak)
 
     J = votes1.shape[1]
     row_totals = votes1.sum(axis=0)  # shape (J,)

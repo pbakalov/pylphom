@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from scipy.optimize import linprog
 
@@ -7,6 +9,7 @@ def lphom_local(
     votes2: np.ndarray,
     P_ref: np.ndarray,
     fixed_zeros: list[tuple[int, int]] | None = None,
+    tiebreak: bool = True,
 ) -> np.ndarray:
     """
     Estimate a precinct-level transfer matrix for each precinct, anchored to
@@ -39,6 +42,12 @@ def lphom_local(
     fixed_zeros : list of (j, k), optional
         Entries of P (and correspondingly N) that are constrained to be
         exactly 0. Should match the `fixed_zeros` used to compute `P_ref`.
+    tiebreak : bool, default True
+        The LP above often has many equally good solutions. If True, solve a
+        second LP that picks, among them, the one whose proportions are
+        closest to P_ref: minimise sum_{j,k} |P_i[j,k] - P_ref[j,k]|. This is
+        what the R lphom package does. If False, return whichever optimal
+        solution the solver finds.
 
     Returns
     -------
@@ -77,7 +86,7 @@ def lphom_local(
             P_local[i] = P_ref
             continue
 
-        N_i = _local_lp(x, y, P_ref, fixed_zeros)
+        N_i = _local_lp(x, y, P_ref, fixed_zeros, tiebreak)
 
         with np.errstate(invalid="ignore", divide="ignore"):
             P_i = N_i / x[:, None]
@@ -93,6 +102,7 @@ def _local_lp(
     y: np.ndarray,
     P_ref: np.ndarray,
     fixed_zeros: list[tuple[int, int]] | None = None,
+    tiebreak: bool = True,
 ) -> np.ndarray:
     """
     Solve the transportation linear program (LP) for a single precinct.
@@ -114,6 +124,8 @@ def _local_lp(
         Reference transfer matrix anchoring the L1 objective.
     fixed_zeros : list of (j, k), optional
         Entries of N that are constrained to be exactly 0.
+    tiebreak : bool, default True
+        See `lphom_local`.
 
     Returns
     -------
@@ -167,4 +179,24 @@ def _local_lp(
     if not result.success:
         raise RuntimeError(f"LP solver did not converge for precinct: {result.message}")
 
-    return result.x[:n_n].reshape(J, K)
+    if not tiebreak:
+        return result.x[:n_n].reshape(J, K)
+
+    # Stage 2: keep the stage-1 error at its optimum and, among those
+    # solutions, minimise sum |N[j,k]/x[j] - P_ref[j,k]|. That is the same
+    # residual e+/e- divided by x[j] (rows with x[j] == 0 are all zero anyway).
+    with np.errstate(divide="ignore"):
+        w = np.where(x > 0, 1.0 / x, 0.0)
+    w = np.repeat(w, K)
+    c2 = np.zeros(n_vars)
+    c2[n_n : 2 * n_n] = w
+    c2[2 * n_n :] = w
+    A_ub = c[None, :]
+    b_ub = [result.fun * (1 + 1e-9) + 1e-7]
+    result2 = linprog(c2, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+
+    if not result2.success:
+        warnings.warn(f"tie-break LP failed ({result2.message}); using the stage-1 solution")
+        return result.x[:n_n].reshape(J, K)
+
+    return result2.x[:n_n].reshape(J, K)

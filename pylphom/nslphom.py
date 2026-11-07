@@ -34,6 +34,8 @@ def nslphom(
     votes2: np.ndarray,
     fixed_zeros: list[tuple[int, int]] | None = None,
     max_iter: int = 10,
+    match_totals: bool = True,
+    tiebreak: bool = True,
 ) -> NslphomResult:
     """
     Non-linear sequential lphom (nslphom).
@@ -57,6 +59,10 @@ def nslphom(
     max_iter : int, default 10
         Maximum number of lphom_local + re-aggregation iterations after
         the initial global lphom solve.
+    match_totals : bool, default True
+        Passed to `lphom`.
+    tiebreak : bool, default True
+        Passed to `lphom_local`.
 
     Returns
     -------
@@ -69,7 +75,7 @@ def nslphom(
     votes1 = np.asarray(votes1, dtype=float)
     votes2 = np.asarray(votes2, dtype=float)
 
-    P_current = lphom(votes1, votes2, fixed_zeros=fixed_zeros)
+    P_current = lphom(votes1, votes2, fixed_zeros=fixed_zeros, match_totals=match_totals)
 
     best_P = None
     best_P_local = None
@@ -77,7 +83,7 @@ def nslphom(
     hi_history = []
 
     for _ in range(max_iter):
-        P_local = lphom_local(votes1, votes2, P_current, fixed_zeros=fixed_zeros)
+        P_local = lphom_local(votes1, votes2, P_current, fixed_zeros=fixed_zeros, tiebreak=tiebreak)
         P_new = _reaggregate(votes1, P_local, P_current)
         hi = _heterogeneity_index(votes1, P_local, P_new)
         hi_history.append(hi)
